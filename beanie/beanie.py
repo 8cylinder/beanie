@@ -3,117 +3,106 @@
 
 import click
 import os
-import requests
+import re
+# import requests
 from pprint import pprint as pp
+from pathlib import Path
 
 from transformers import AutoProcessor, AutoModelForCausalLM
 from PIL import Image
 
-processor = AutoProcessor.from_pretrained("microsoft/git-base-coco")
-model = AutoModelForCausalLM.from_pretrained("microsoft/git-base-coco")
 
-images_dir = 'images'
-images = [os.path.join(images_dir, f) for f in os.listdir(images_dir)]
-for image in images:
-    with Image.open(image) as img:
-
-        # url = "http://images.cocodataset.org/val2017/000000039769.jpg"
-        # image = Image.open(requests.get(url, stream=True).raw)
-        pixel_values = processor(images=img, return_tensors="pt").pixel_values
-        generated_ids = model.generate(pixel_values=pixel_values, max_length=50)
-        generated_caption = processor.batch_decode(generated_ids, skip_special_tokens=True)[0]
-
-        click.secho(image, bold=True)
-        click.secho(f'    {generated_caption}')
+IMAGE_TYPES = ['.jpg', '.png', '.gif']
+VERBOTEN = '''.'"'''
 
 
-# import os
-# import requests
-# from PIL import Image
-# from transformers import BlipProcessor, BlipForConditionalGeneration
-# from pprint import pprint as pp
-#
-# processor = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-large")
-# model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-large")
-#
-# images_dir = 'images'
-# images = [os.path.join(images_dir, f) for f in os.listdir(images_dir)]
-#
-# for image in images:
-#     with Image.open(image) as img:
-#         # print(f"Processing image {image} with size {img.size}")
-#         # pp(img)
-#         # continue
-#
-#         # img_url = 'https://storage.googleapis.com/sfr-vision-language-research/BLIP/demo.jpg'
-#         # image = Image.open(img).convert('RGB')
-#         # pp(image)
-#         # continue
-#
-#         # conditional image captioning
-#         inputs = processor(img, return_tensors="pt")
-#         out = model.generate(**inputs)
-#         print(image)
-#         print('   ', processor.decode(out[0], skip_special_tokens=True))
-#
-#         # # unconditional image captioning
-#         # inputs = processor(image, return_tensors="pt")
-#         # out = model.generate(**inputs)
-#         # print(processor.decode(out[0], skip_special_tokens=True))
+def info(msg):
+    click.secho(msg, fg='blue')
 
 
+def caption_images(images):
+    info('Model loading')
+    processor = AutoProcessor.from_pretrained("microsoft/git-base-coco")
+    model = AutoModelForCausalLM.from_pretrained("microsoft/git-base-coco")
+    names = []
+    for image in images:
+        with Image.open(image) as img:
+            info(f'Processing {image}')
+            pixel_values = processor(images=img, return_tensors="pt").pixel_values
+            generated_ids = model.generate(
+                pixel_values=pixel_values, max_length=50)
+            generated_caption = processor.batch_decode(
+                generated_ids, skip_special_tokens=True)[0]
+
+            names.append(generated_caption)
+    return names
 
 
-# import click
-# from transformers import ViTImageProcessor
-# from transformers import VisionEncoderDecoderModel
-# from transformers import AutoTokenizer
-# import torch
-# from PIL import Image
-# from pprint import pprint as pp
-#
-#
-# def predict_step(image_paths):
-#     model = VisionEncoderDecoderModel.from_pretrained("nlpconnect/vit-gpt2-image-captioning")
-#     feature_extractor = ViTImageProcessor.from_pretrained("nlpconnect/vit-gpt2-image-captioning")
-#     tokenizer = AutoTokenizer.from_pretrained("nlpconnect/vit-gpt2-image-captioning")
-#
-#     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-#     model.to(device)
-#
-#
-#     # max_length = 16
-#     # num_beams = 4
-#     max_length = 50
-#     num_beams = 4
-#     gen_kwargs = {"max_length": max_length, "num_beams": num_beams}
-#
-#     images = []
-#     for image_path in image_paths:
-#         i_image = Image.open(image_path)
-#         if i_image.mode != "RGB":
-#             i_image = i_image.convert(mode="RGB")
-#
-#         images.append(i_image)
-#
-#     pixel_values = feature_extractor(images=images, return_tensors="pt").pixel_values
-#     pixel_values = pixel_values.to(device)
-#
-#     output_ids = model.generate(pixel_values, **gen_kwargs)
-#
-#     preds = tokenizer.batch_decode(output_ids, skip_special_tokens=True)
-#     preds = [pred.strip() for pred in preds]
-#     return preds
-#
-#
-# @click.command()
-# @click.argument("image_paths", nargs=-1, required=True)
-# def caption_images(image_paths):
-#     captions = predict_step(image_paths)
-#     for caption, image in zip(captions, image_paths):
-#         print(image)
-#         print(f'    {caption}')
-#
-#
-# if __name__ == "__main__":
-#     caption_images()
+def get_command(caption, image):
+    new_name = caption.replace(' ', '-').lower()
+    new_name = ''.join([i for i in new_name if i not in VERBOTEN])
+    new_name = re.sub('[-]+', '-', new_name)
+    cmd = f'mv {image} {image.parent}/{new_name}{image.suffix}'
+    return cmd
+
+
+def print_command(cmd):
+    click.secho(cmd, fg='yellow')
+
+
+def run_command(cmd):
+    click.secho('would rename file')
+
+
+def process_images(images, for_real):
+    if not images:
+        click.secho('No images found')
+        exit()
+
+    captions = caption_images(images)
+
+    for image, caption in zip(images, captions):
+        command = get_command(caption, image)
+        if for_real:
+            print_command(command)
+            run_command(command)
+        else:
+            print_command(command)
+
+
+@click.group()
+def caption():
+    """Use ai to caption images."""
+    pass
+
+
+@caption.command()
+@click.argument(
+    'image_dir',
+    type=click.Path(exists=True), # , file_ok=False<
+    required=True,
+)
+@click.option('-r', '--for-real', is_flag=True)
+def dir(image_dir, for_real):
+    """Apply to a dir of images."""
+
+    images = [
+        image_dir / Path(i) for i in os.listdir(image_dir)
+        if os.path.splitext(i)[1]
+        in IMAGE_TYPES
+    ]
+    process_images(images, for_real)
+
+
+@caption.command()
+@click.argument("images", nargs=-1, required=True)
+@click.option('-r', '--for-real', is_flag=True)
+def images(images, for_real):
+    """Apply to a list of images."""
+
+    images = [Path(i) for i in images if os.path.splitext(i)[1] in IMAGE_TYPES]
+    process_images(images, for_real)
+
+
+if __name__ == "__main__":
+    caption()
